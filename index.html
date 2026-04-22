@@ -135,6 +135,47 @@
       margin-top: .15rem;
     }
 
+    .header-progress {
+      font-size: .84rem;
+      color: var(--accent);
+      font-weight: 600;
+      margin-top: .4rem;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
+      letter-spacing: .01em;
+    }
+
+    .header-progress.is-complete {
+      color: var(--accent);
+      font-weight: 700;
+      text-shadow: 0 0 24px var(--accent-soft);
+    }
+
+    /* ── Tasks panel progress bar ─────────────────────────────── */
+    .tasks-progress-block {
+      margin: -0.35rem 0 1.15rem;
+    }
+
+    .tasks-progress-track {
+      height: 6px;
+      background: var(--surface2);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .tasks-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 999px;
+      transition: width .35s ease;
+    }
+
+    .tasks-progress-block.is-complete .tasks-progress-fill {
+      filter: brightness(1.12);
+    }
+
     /* ── Card Surface ─────────────────────────────────────────── */
     .panel {
       background: var(--surface);
@@ -444,6 +485,24 @@
       transform: translateX(2px);
     }
 
+    .task-card.completed {
+      opacity: .72;
+    }
+
+    .task-card.completed .task-name,
+    .task-card.completed .task-meta {
+      text-decoration: line-through;
+      color: var(--text-muted);
+    }
+
+    .task-card.completed .task-duration {
+      opacity: .85;
+    }
+
+    .timeline-block--completed {
+      opacity: 0.45;
+    }
+
     .task-dot {
       width: 12px;
       height: 12px;
@@ -518,6 +577,29 @@
       background: var(--accent-soft);
     }
 
+    .btn-complete {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: .3rem;
+      border-radius: 6px;
+      line-height: 1;
+      font-size: .9rem;
+      transition: color var(--transition), background var(--transition);
+      flex-shrink: 0;
+    }
+
+    .btn-complete:hover {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .btn-complete[aria-pressed="true"] {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
     /* ── Edit mode ────────────────────────────────────────────── */
     .panel.editing {
       border-color: var(--accent);
@@ -586,6 +668,7 @@
       <div>
         <h1>Cronograma del día</h1>
         <p id="today-label"></p>
+        <p class="header-progress" id="header-progress" role="status" aria-live="polite"></p>
       </div>
     </header>
 
@@ -633,6 +716,12 @@
     <!-- Task Cards -->
     <section class="panel" aria-label="Lista de tareas">
       <p class="panel-title">Tareas del día</p>
+      <div class="tasks-progress-block" id="tasks-progress-block">
+        <div class="tasks-progress-track" id="tasks-progress-track" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progreso del día">
+          <div class="tasks-progress-fill" id="tasks-progress-fill"></div>
+        </div>
+      </div>
       <div id="cards-container"></div>
     </section>
 
@@ -695,6 +784,10 @@
     const editNoticeEl   = document.getElementById('edit-notice');
     const editNoticeText = document.getElementById('edit-notice-text');
     const cancelEditBtn  = document.getElementById('btn-cancel-edit');
+    const headerProgressEl   = document.getElementById('header-progress');
+    const tasksProgressBlock = document.getElementById('tasks-progress-block');
+    const tasksProgressTrack = document.getElementById('tasks-progress-track');
+    const tasksProgressFill  = document.getElementById('tasks-progress-fill');
 
     /* ── Helpers ─────────────────────────────────────────────── */
     function timeToMinutes(t) {
@@ -813,6 +906,7 @@
       const s = timeToMinutes(start);
       const e = timeToMinutes(end);
       return tasks.filter(t => {
+        if (t.completed) return false;
         if (t.id === editingTaskId) return false; // exclude self when editing
         const ts = timeToMinutes(t.start);
         const te = timeToMinutes(t.end);
@@ -835,14 +929,15 @@
       warnEl.classList.remove('visible');
       warnEl.innerHTML = '';
       awaitingOverlapConfirm = false;
-      addBtn.textContent = '+ Agregar';
+      addBtn.textContent = editingTaskId ? 'Guardar cambios' : '+ Agregar';
       addBtn.classList.remove('confirming');
     }
 
     /* ── Persistence ─────────────────────────────────────────── */
     function loadTasks() {
       try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+        const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+        return raw.map(t => ({ ...t, completed: !!t.completed }));
       } catch { return []; }
     }
 
@@ -884,11 +979,11 @@
         const width = (endMin - startMin) / MINUTES_IN_DAY * 100;
 
         const block = document.createElement('div');
-        block.className = 'timeline-block';
+        block.className = 'timeline-block' + (task.completed ? ' timeline-block--completed' : '');
         block.style.left       = `${left}%`;
         block.style.width      = `${Math.max(width, 0.5)}%`;
         block.style.background = getTaskColor(task);
-        block.dataset.tooltip  = `${task.name}  ${task.start}–${task.end}`;
+        block.dataset.tooltip  = `${task.completed ? '✓ ' : ''}${task.name}  ${task.start}–${task.end}`;
 
         trackEl.appendChild(block);
       });
@@ -896,9 +991,12 @@
 
     /* ── Render: task cards ──────────────────────────────────── */
     function renderCards() {
-      const sorted = [...tasks].sort((a, b) =>
-        timeToMinutes(a.start) - timeToMinutes(b.start)
-      );
+      const sorted = [...tasks].sort((a, b) => {
+        const pa = a.completed ? 1 : 0;
+        const pb = b.completed ? 1 : 0;
+        if (pa !== pb) return pa - pb;
+        return timeToMinutes(a.start) - timeToMinutes(b.start);
+      });
 
       countEl.textContent = `${tasks.length} ${tasks.length === 1 ? 'tarea' : 'tareas'}`;
 
@@ -919,8 +1017,9 @@
         const startMin = timeToMinutes(task.start);
         const endMin   = timeToMinutes(task.end);
 
+        const done = !!task.completed;
         const card = document.createElement('div');
-        card.className = 'task-card';
+        card.className = 'task-card' + (done ? ' completed' : '');
         card.innerHTML = `
           <div class="task-dot" style="background:${getTaskColor(task)}"></div>
           <div class="task-info">
@@ -928,6 +1027,16 @@
             <div class="task-meta">${task.start} – ${task.end}</div>
           </div>
           <span class="task-duration">${formatDuration(startMin, endMin)}</span>
+          <button class="btn-complete" type="button" data-id="${task.id}"
+                  title="${done ? 'Marcar como pendiente' : 'Marcar como completada'}"
+                  aria-label="${done ? 'Marcar como pendiente' : 'Marcar como completada'}: ${escapeHtml(task.name)}"
+                  aria-pressed="${done}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </button>
           <button class="btn-edit" data-id="${task.id}" title="Editar tarea" aria-label="Editar ${escapeHtml(task.name)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -942,6 +1051,10 @@
 
       cardsEl.appendChild(list);
 
+      cardsEl.querySelectorAll('.btn-complete').forEach(btn => {
+        btn.addEventListener('click', () => toggleComplete(btn.dataset.id));
+      });
+
       cardsEl.querySelectorAll('.btn-edit').forEach(btn => {
         btn.addEventListener('click', () => enterEditMode(btn.dataset.id));
       });
@@ -954,10 +1067,42 @@
       });
     }
 
+    /* ── Progress (header + tasks panel bar) ─────────────────── */
+    function updateProgress() {
+      const total = tasks.length;
+      const done  = tasks.filter(t => t.completed).length;
+      const pct   = total ? Math.round((done / total) * 100) : 0;
+
+      if (total === 0) {
+        headerProgressEl.textContent =
+          'Sin tareas aún — añade una para ver tu progreso.';
+        headerProgressEl.classList.remove('is-complete');
+        tasksProgressFill.style.width = '0%';
+        tasksProgressTrack.setAttribute('aria-valuenow', '0');
+        tasksProgressBlock.classList.remove('is-complete');
+        return;
+      }
+
+      if (pct === 100) {
+        headerProgressEl.textContent =
+          `100% · ${done}/${total} completadas — ¡día completo!`;
+        headerProgressEl.classList.add('is-complete');
+        tasksProgressBlock.classList.add('is-complete');
+      } else {
+        headerProgressEl.textContent = `${pct}% · ${done}/${total} completadas`;
+        headerProgressEl.classList.remove('is-complete');
+        tasksProgressBlock.classList.remove('is-complete');
+      }
+
+      tasksProgressFill.style.width = `${pct}%`;
+      tasksProgressTrack.setAttribute('aria-valuenow', String(pct));
+    }
+
     /* ── Full render ─────────────────────────────────────────── */
     function render() {
       renderTimeline();
       renderCards();
+      updateProgress();
       updateTimeIndicator();
     }
 
@@ -1019,13 +1164,22 @@
         );
         exitEditMode();
       } else {
-        tasks.push({ id: uid(), name, start, end, color: selectedColor });
+        tasks.push({ id: uid(), name, start, end, color: selectedColor, completed: false });
         nameInput.value  = '';
         startInput.value = '';
         endInput.value   = '';
         nameInput.focus();
       }
 
+      saveTasks();
+      render();
+    }
+
+    /* ── Toggle completed ───────────────────────────────────── */
+    function toggleComplete(id) {
+      tasks = tasks.map(t =>
+        t.id === id ? { ...t, completed: !t.completed } : t
+      );
       saveTasks();
       render();
     }
