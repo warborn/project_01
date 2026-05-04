@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cronograma del Día</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/timepicker-ui@4.3.0/dist/css/main.css" />
   <style>
     /* ── Reset & Base ─────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,6 +29,18 @@
       --radius-sm:   8px;
       --shadow:      0 4px 24px rgba(0,0,0,.45);
       --transition:  .18s ease;
+      --tp-bg: var(--surface);
+      --tp-surface: var(--surface2);
+      --tp-surface-container: var(--surface);
+      --tp-input-bg: var(--surface2);
+      --tp-text: var(--text);
+      --tp-text-secondary: var(--text-muted);
+      --tp-primary: var(--accent);
+      --tp-primary-rgb: 108,99,255;
+      --tp-on-primary: #fff;
+      --tp-outline: var(--accent);
+      --tp-outline-variant: var(--border);
+      --tp-backdrop: rgba(0,0,0,.55);
     }
 
     [data-theme="light"] {
@@ -240,13 +253,22 @@
       box-shadow: 0 0 0 3px var(--accent-soft);
     }
 
-    .input-group input[type="time"] {
-      width: 130px;
+    .input-group input[readonly] {
+      cursor: pointer;
+      caret-color: transparent;
     }
 
     .input-group input.invalid {
       border-color: var(--danger);
       box-shadow: 0 0 0 3px rgba(255,77,109,.15);
+    }
+
+    .tp-ui {
+      width: 130px;
+    }
+
+    .tp-ui input {
+      width: 100%;
     }
 
     .btn-add {
@@ -682,11 +704,11 @@
         </div>
         <div class="input-group">
           <label for="task-start">Inicio</label>
-          <input type="time" id="task-start" />
+          <input type="text" id="task-start" placeholder="Selecciona hora" readonly />
         </div>
         <div class="input-group">
           <label for="task-end">Fin</label>
-          <input type="time" id="task-end" />
+          <input type="text" id="task-end" placeholder="Selecciona hora" readonly />
         </div>
         <button class="btn-add" id="btn-add" type="button">+ Agregar</button>
       </div>
@@ -727,7 +749,9 @@
 
   </div>
 
-  <script>
+  <script type="module">
+    import { TimepickerUI } from 'https://cdn.jsdelivr.net/npm/timepicker-ui@4.3.0/dist/index.js';
+
     /* ── Theme ───────────────────────────────────────────────── */
     const THEME_KEY = 'schedule_theme_v1';
     const htmlEl    = document.documentElement;
@@ -788,11 +812,103 @@
     const tasksProgressBlock = document.getElementById('tasks-progress-block');
     const tasksProgressTrack = document.getElementById('tasks-progress-track');
     const tasksProgressFill  = document.getElementById('tasks-progress-fill');
+    let startTimePicker = null;
+    let endTimePicker   = null;
 
     /* ── Helpers ─────────────────────────────────────────────── */
     function timeToMinutes(t) {
       const [h, m] = t.split(':').map(Number);
       return h * 60 + m;
+    }
+
+    function to24HourValue(hour, minute, period) {
+      if (!hour || !minute || !period) return '';
+      let h = Number(hour);
+      if (period === 'AM' && h === 12) h = 0;
+      if (period === 'PM' && h !== 12) h += 12;
+      return `${String(h).padStart(2, '0')}:${minute}`;
+    }
+
+    function formatTimeForInput(value) {
+      if (!value) return '';
+      const [rawHour, minute] = value.split(':');
+      const hour24 = Number(rawHour);
+      const period = hour24 >= 12 ? 'PM' : 'AM';
+      const hour12 = hour24 % 12 || 12;
+      return `${hour12}:${minute} ${period}`;
+    }
+
+    function normalizePickerTime(value) {
+      if (!value) return '';
+      const trimmed = value.trim();
+      const twentyFourHour = trimmed.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+      if (twentyFourHour) return trimmed;
+
+      const twelveHour = trimmed.match(/^(1[0-2]|0?[1-9]):([0-5]\d)\s*(AM|PM)$/i);
+      if (!twelveHour) return '';
+      return to24HourValue(twelveHour[1], twelveHour[2], twelveHour[3].toUpperCase());
+    }
+
+    function getTimeInputValue(input) {
+      return input.dataset.value24 || normalizePickerTime(input.value);
+    }
+
+    function setTimeInputValue(input, value, picker) {
+      input.dataset.value24 = value || '';
+      input.value = formatTimeForInput(value);
+      input.classList.remove('invalid');
+      if (picker && value) picker.setValue(formatTimeForInput(value), false);
+    }
+
+    function handleTimeSelected(input, data) {
+      const value = to24HourValue(data.hour, data.minutes, data.type || 'AM');
+      setTimeInputValue(input, value);
+      input.classList.remove('invalid');
+      errorEl.textContent = '';
+      clearOverlapWarning();
+    }
+
+    function initTimePickers() {
+      const options = {
+        clock: {
+          type: '12h',
+          incrementMinutes: 5,
+          autoSwitchToMinutes: true,
+        },
+        ui: {
+          animation: true,
+          backdrop: true,
+          editable: false,
+          enableSwitchIcon: true,
+        },
+        labels: {
+          time: 'Selecciona hora',
+          mobileTime: 'Selecciona hora',
+          mobileHour: 'Hora',
+          mobileMinute: 'Minuto',
+          cancel: 'Cancelar',
+          ok: 'Aceptar',
+          am: 'AM',
+          pm: 'PM',
+        },
+      };
+
+      startTimePicker = new TimepickerUI(startInput, {
+        ...options,
+        callbacks: {
+          onConfirm: data => handleTimeSelected(startInput, data),
+        },
+      });
+
+      endTimePicker = new TimepickerUI(endInput, {
+        ...options,
+        callbacks: {
+          onConfirm: data => handleTimeSelected(endInput, data),
+        },
+      });
+
+      startTimePicker.create();
+      endTimePicker.create();
     }
 
     function formatDuration(startMin, endMin) {
@@ -843,8 +959,8 @@
 
       editingTaskId = id;
       nameInput.value  = task.name;
-      startInput.value = task.start;
-      endInput.value   = task.end;
+      setTimeInputValue(startInput, task.start, startTimePicker);
+      setTimeInputValue(endInput, task.end, endTimePicker);
       selectedColor    = task.color || PALETTE[0];
 
       renderSwatches();
@@ -864,8 +980,8 @@
     function exitEditMode() {
       editingTaskId = null;
       nameInput.value  = '';
-      startInput.value = '';
-      endInput.value   = '';
+      setTimeInputValue(startInput, '', startTimePicker);
+      setTimeInputValue(endInput, '', endTimePicker);
       selectedColor    = PALETTE[0];
 
       renderSwatches();
@@ -1109,8 +1225,8 @@
     /* ── Add task ────────────────────────────────────────────── */
     function addTask() {
       const name  = nameInput.value.trim();
-      const start = startInput.value;
-      const end   = endInput.value;
+      const start = getTimeInputValue(startInput);
+      const end   = getTimeInputValue(endInput);
 
       errorEl.textContent = '';
       nameInput.classList.remove('invalid');
@@ -1166,8 +1282,8 @@
       } else {
         tasks.push({ id: uid(), name, start, end, color: selectedColor, completed: false });
         nameInput.value  = '';
-        startInput.value = '';
-        endInput.value   = '';
+        setTimeInputValue(startInput, '', startTimePicker);
+        setTimeInputValue(endInput, '', endTimePicker);
         nameInput.focus();
       }
 
@@ -1199,10 +1315,17 @@
       if (e.key === 'Enter') addTask();
     });
 
-    [nameInput, startInput, endInput].forEach(el => {
-      el.addEventListener('input', () => {
+    nameInput.addEventListener('input', () => {
+      errorEl.textContent = '';
+      nameInput.classList.remove('invalid');
+      clearOverlapWarning();
+    });
+
+    [startInput, endInput].forEach(input => {
+      input.addEventListener('input', () => {
+        input.dataset.value24 = normalizePickerTime(input.value);
+        input.classList.remove('invalid');
         errorEl.textContent = '';
-        el.classList.remove('invalid');
         clearOverlapWarning();
       });
     });
@@ -1210,6 +1333,7 @@
     /* ── Init ────────────────────────────────────────────────── */
     renderDate();
     renderHourLabels();
+    initTimePickers();
     renderSwatches();
     render();
 
